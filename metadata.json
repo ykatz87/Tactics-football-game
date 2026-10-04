@@ -1,0 +1,6 @@
+{
+  "name": "Retro Football Tactics",
+  "description": "Turn-based football game like XCOM",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
