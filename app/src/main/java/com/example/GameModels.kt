@@ -275,6 +275,20 @@ data class TacticalDuelState(
     val timestamp: Long = System.currentTimeMillis()
 )
 
+enum class CameraAngleMode(val label: String, val icon: String, val badge: String) {
+    BROADCAST("שידור TV", "📺", "TV"),
+    END_TO_END("מבט שער", "🥅", "GOAL"),
+    ACTION_CAM("אקשן צמוד", "🎥", "CAM"),
+    TACTICAL_2D("טקטי 2D", "📐", "2D");
+
+    fun next(): CameraAngleMode = when (this) {
+        BROADCAST -> END_TO_END
+        END_TO_END -> ACTION_CAM
+        ACTION_CAM -> TACTICAL_2D
+        TACTICAL_2D -> BROADCAST
+    }
+}
+
 enum class GameMode(val title: String, val subtitle: String, val isLocked: Boolean = false) {
     ARCADE("ארקייד מהיר", "משחק מהיר וזורם בטאפ אחד, ללא חיכוך", false),
     TACTICAL("טקטיקה מתקדמת", "עומק מלא: מערכים, דואלים, כושר ומנטליות", false),
@@ -316,7 +330,9 @@ data class GameState(
     val activeSetPiece: SetPieceState? = null,
     val gkSaveEffect: GkSaveEffect? = null,
     val tacticalDuel: TacticalDuelState? = null,
-    val ballTrajectory: BallTrajectory? = null
+    val ballTrajectory: BallTrajectory? = null,
+    val is3DView: Boolean = true,
+    val cameraMode: CameraAngleMode = CameraAngleMode.BROADCAST
 ) {
     companion object {
         fun createInitialPlayers(formation: Formation = Formation.F442, existingCards: Map<Int, Pair<Int, Boolean>> = emptyMap()): List<Player> {

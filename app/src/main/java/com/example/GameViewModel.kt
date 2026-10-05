@@ -29,13 +29,20 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         return if (!hasPlayedFirst) {
             // First time launching: directly enter Arcade mode without friction!
             prefs.edit().putBoolean(PREF_HAS_PLAYED_FIRST, true).apply()
+            val arcadePlayers = baseState.players.map { p ->
+                if (p.id == 10) p.copy(position = Position(5, 7)) else p
+            }
             baseState.copy(
+                players = arcadePlayers,
                 isInMainMenu = false,
                 isPregame = false,
                 gameMode = GameMode.ARCADE,
+                ballPosition = null,
+                playerWithBallId = 10,
+                selectedPlayerId = 10,
                 actionsLeft = 1,
                 isFirstTimeUser = true,
-                uiMessage = "⚡ מצב ארקייד מהיר: פעולה 1 לתור! הראשון ל-3 שערים מנצח! 🎯"
+                uiMessage = "⚡ ארקייד מהיר: זהבי פותח עם הכדור! לחץ על שחקן למסירה, כדרר, או בעט לשער! 🎯"
             )
         } else {
             // Already played before: open Main Menu
@@ -51,14 +58,18 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         prefs.edit().putBoolean(PREF_HAS_PLAYED_FIRST, true).apply()
         aiJob?.cancel()
         _gameState.update {
-            val newPlayers = GameState.createInitialPlayers(formation = Formation.F442)
+            val basePlayers = GameState.createInitialPlayers(formation = Formation.F442)
+            val newPlayers = basePlayers.map { p ->
+                if (p.id == 10) p.copy(position = Position(5, 7)) else p
+            }
             it.copy(
                 players = newPlayers,
                 isPregame = false,
                 isInMainMenu = false,
                 gameMode = GameMode.ARCADE,
-                ballPosition = Position(5, 7),
-                playerWithBallId = null,
+                ballPosition = null,
+                playerWithBallId = 10,
+                selectedPlayerId = 10,
                 currentTurn = Team.HOME,
                 actionsLeft = 1,
                 homeScore = 0,
@@ -70,7 +81,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 actedPlayerIds = emptySet(),
                 activeSetPiece = null,
                 tacticalDuel = null,
-                uiMessage = "⚡ מצב ארקייד מהיר: פעולה 1 לתור! הראשון ל-3 שערים מנצח! 🎯"
+                uiMessage = "⚡ ארקייד מהיר: זהבי פותח עם הכדור! לחץ על שחקן למסירה, כדרר, או בעט לשער! 🎯"
             )
         }
     }
@@ -97,6 +108,29 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setCameraMode(mode: CameraAngleMode) {
+        _gameState.update {
+            it.copy(
+                cameraMode = mode,
+                is3DView = mode != CameraAngleMode.TACTICAL_2D
+            )
+        }
+    }
+
+    fun cycleCameraMode() {
+        _gameState.update {
+            val next = it.cameraMode.next()
+            it.copy(
+                cameraMode = next,
+                is3DView = next != CameraAngleMode.TACTICAL_2D
+            )
+        }
+    }
+
+    fun toggle3DView() {
+        cycleCameraMode()
+    }
+
     fun returnToMainMenu() {
         aiJob?.cancel()
         _gameState.update {
@@ -113,15 +147,19 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         prefs.edit().putBoolean(PREF_HAS_PLAYED_FIRST, false).apply()
         aiJob?.cancel()
         _gameState.update {
-            val newPlayers = GameState.createInitialPlayers(formation = Formation.F442)
+            val basePlayers = GameState.createInitialPlayers(formation = Formation.F442)
+            val newPlayers = basePlayers.map { p ->
+                if (p.id == 10) p.copy(position = Position(5, 7)) else p
+            }
             it.copy(
                 players = newPlayers,
                 isInMainMenu = false,
                 isPregame = false,
                 gameMode = GameMode.ARCADE,
                 isFirstTimeUser = true,
-                ballPosition = Position(5, 7),
-                playerWithBallId = null,
+                ballPosition = null,
+                playerWithBallId = 10,
+                selectedPlayerId = 10,
                 currentTurn = Team.HOME,
                 actionsLeft = 1,
                 homeScore = 0,
@@ -133,7 +171,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 actedPlayerIds = emptySet(),
                 activeSetPiece = null,
                 tacticalDuel = null,
-                uiMessage = "⚡ מצב ארקייד מהיר: פעולה 1 לתור! הראשון ל-3 שערים מנצח! 🎯"
+                uiMessage = "⚡ ארקייד מהיר: זהבי פותח עם הכדור! לחץ על שחקן למסירה, כדרר, או בעט לשער! 🎯"
             )
         }
     }
@@ -568,6 +606,29 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        // Direct Pass check: if current selected friendly player has the ball and clicked on a teammate: DIRECT PASS!
+        val currentSelected = state.players.find { 
+            it.id == state.selectedPlayerId && 
+            it.team == state.currentTurn && 
+            !state.actedPlayerIds.contains(it.id) 
+        }
+        if (currentSelected != null && currentSelected.id == state.playerWithBallId && player.id != currentSelected.id) {
+            val passTiles = PitchGridEvaluator.computeValidPassingTiles(state, currentSelected)
+            if (passTiles.containsKey(player.position)) {
+                performPass(currentSelected.id, player.position)
+                return
+            } else {
+                val maxRange = currentSelected.getPassRange(state.gameMode)
+                val dist = maxOf(abs(currentSelected.position.x - player.position.x), abs(currentSelected.position.y - player.position.y))
+                _gameState.update {
+                    it.copy(
+                        uiMessage = "⚠️ ${player.name} מחוץ לטווח מסירה של ${currentSelected.name} (מרחק: $dist, טווח מסירה: $maxRange)!"
+                    )
+                }
+                return
+            }
+        }
+
         
         _gameState.update { currentState ->
             val hasBall = currentState.playerWithBallId == player.id
@@ -744,25 +805,60 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
                 onPlayerSelected(clickedPlayer.id)
             } else {
-                // Clicked an empty pitch tile: check if it's a valid movement coordinate for selected player
+                // Clicked an empty pitch tile: check if it's a valid movement coordinate or passing coordinate for selected player
                 if (currentSelected != null && currentSelected.team == state.currentTurn && !state.actedPlayerIds.contains(currentSelected.id)) {
-                    val moveTiles = PitchGridEvaluator.computeValidMovementTiles(state, currentSelected)
                     val targetPos = Position(x, y)
-                    if (moveTiles.containsKey(targetPos)) {
-                        if (currentSelected.id == state.playerWithBallId) {
-                            performDribble(currentSelected.id, targetPos)
-                        } else {
-                            performMove(currentSelected.id, targetPos)
+                    val moveTiles = PitchGridEvaluator.computeValidMovementTiles(state, currentSelected)
+                    
+                    // If ball-carrier is selected: check for passing line / teammate badge tap, dribble, or through-ball
+                    if (currentSelected.id == state.playerWithBallId) {
+                        val passTiles = PitchGridEvaluator.computeValidPassingTiles(state, currentSelected)
+                        
+                        // Check 1: Did user tap on or near the passing line / floating percentage badge towards a teammate?
+                        val matchedTeammatePass = passTiles.entries.find { (pos, info) ->
+                            info.isTeammate && (
+                                pos == targetPos ||
+                                (abs((currentSelected.position.x + pos.x) / 2 - x) <= 1 && abs((currentSelected.position.y + pos.y) / 2 - y) <= 1)
+                            )
                         }
-                        return
-                    } else {
+                        if (matchedTeammatePass != null) {
+                            performPass(currentSelected.id, matchedTeammatePass.key)
+                            return
+                        }
+                        
+                        // Check 2: Did user tap an adjacent/valid dribble tile?
+                        if (moveTiles.containsKey(targetPos)) {
+                            performDribble(currentSelected.id, targetPos)
+                            return
+                        }
+                        
+                        // Check 3: Did user tap an open space in pass range (through ball)?
+                        if (passTiles.containsKey(targetPos)) {
+                            performPass(currentSelected.id, targetPos)
+                            return
+                        }
+                        
                         val dist = maxOf(abs(currentSelected.position.x - x), abs(currentSelected.position.y - y))
                         _gameState.update {
                             it.copy(
-                                uiMessage = "משבצת מחוץ לטווח המהירות של ${currentSelected.name} (מהירות: ${currentSelected.currentSpeed}, מרחק: $dist, טווח: ${currentSelected.moveRange})!"
+                                uiMessage = "משבצת מחוץ לטווח של ${currentSelected.name} (מרחק: $dist, כדרור: ${currentSelected.moveRange}, מסירה: ${currentSelected.getPassRange(state.gameMode)})!"
                             )
                         }
                         return
+                    } else {
+                        // Player without ball: movement
+                        if (moveTiles.containsKey(targetPos)) {
+                            performMove(currentSelected.id, targetPos)
+                            return
+                        } else {
+                            val dist = maxOf(abs(currentSelected.position.x - x), abs(currentSelected.position.y - y))
+                            _gameState.update {
+                                it.copy(
+                                    uiMessage = "משבצת מחוץ לטווח המהירות של ${currentSelected.name} (מהירות: ${currentSelected.currentSpeed}, מרחק: $dist, טווח: ${currentSelected.moveRange})!"
+                                )
+                            }
+                            return
+                        }
                     }
                 }
                 _gameState.update { it.copy(selectedPlayerId = null, actionMenuOpen = false, previewActions = emptyList(), selectedAction = null) }
@@ -819,7 +915,16 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 if (passTiles.containsKey(targetPos)) {
                     performPass(player.id, targetPos)
                 } else {
-                    _gameState.update { it.copy(uiMessage = "משבצת מחוץ לטווח מסירה!", actionMenuOpen = true, selectedAction = null) }
+                    val matched = passTiles.entries.find { (pos, info) ->
+                        info.isTeammate && (
+                            abs((player.position.x + pos.x) / 2 - x) <= 1 && abs((player.position.y + pos.y) / 2 - y) <= 1
+                        )
+                    }
+                    if (matched != null) {
+                        performPass(player.id, matched.key)
+                    } else {
+                        _gameState.update { it.copy(uiMessage = "משבצת מחוץ לטווח מסירה!", actionMenuOpen = false, selectedAction = null) }
+                    }
                 }
             }
             ActionType.SHOOT -> {
@@ -916,7 +1021,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val dy = (passer.position.y - targetPos.y).toDouble()
         val distance = kotlin.math.sqrt(dx * dx + dy * dy)
         
-        if (distance > passer.passRange) {
+        val maxPassRange = passer.getPassRange(_gameState.value.gameMode)
+        if (distance > maxPassRange) {
             _gameState.update { it.copy(uiMessage = "מסירה ארוכה מדי!", actionMenuOpen = false, selectedAction = null, selectedPlayerId = null) }
             return
         }
@@ -1194,14 +1300,21 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                     isAttackerWin = true
                 )
                 
+                val nextTurn = if (shooter.team == Team.HOME) Team.AWAY else Team.HOME
+                val isConcedingHome = nextTurn == Team.HOME
+                val kickoffStrikerId = if (isConcedingHome) 10 else 21
+                val kickoffPlayers = resetPlayers.map { p ->
+                    if (p.id == kickoffStrikerId) p.copy(position = Position(5, 7)) else p
+                }
+                
                 _gameState.update { 
                     it.copy(
                         homeScore = homeScore,
                         awayScore = awayScore,
-                        ballPosition = Position(5, 7),
-                        playerWithBallId = null,
-                        players = resetPlayers,
-                        selectedPlayerId = null,
+                        ballPosition = null,
+                        playerWithBallId = kickoffStrikerId,
+                        players = kickoffPlayers,
+                        selectedPlayerId = if (isConcedingHome) kickoffStrikerId else null,
                         actionMenuOpen = false,
                         selectedAction = null,
                         actionsLeft = maxActions,
@@ -1210,7 +1323,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                         gkSaveEffect = null,
                         isMatchOver = if (isArcadeWin) true else it.isMatchOver,
                         tacticalDuel = if (isArcade) null else duelState,
-                        currentTurn = if (shooter.team == Team.HOME) Team.AWAY else Team.HOME,
+                        currentTurn = nextTurn,
                         uiMessage = if (isArcadeWin) arcadeWinnerMsg else "⚽ שער!!! גול נהדר של ${shooter.name}! (${eval.breakdownText})"
                     )
                 }
@@ -1710,6 +1823,11 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         )
         val updatedStatsWithAxis = state.stats.copy(axisStats = updatedAxis)
         
+        val autoSelectedPlayerId = if (newTurn == Team.HOME && newPlayerWithBallId != null) {
+            val carrier = finalPlayers.find { it.id == newPlayerWithBallId && it.team == Team.HOME }
+            carrier?.id
+        } else null
+
         android.util.Log.d("GameViewModel", "consumeAction updating state -> ActorId: $actorId, Next Turn: $newTurn, Actions Left: $newActionsLeft, ForceEnd: $forceEndTurn, Min: $nextMinute")
         
         _gameState.update { currentState ->
@@ -1720,10 +1838,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 actionsLeft = newActionsLeft,
                 currentTurn = newTurn,
                 actedPlayerIds = newActedPlayerIds,
-                selectedPlayerId = null,
+                selectedPlayerId = autoSelectedPlayerId,
                 actionMenuOpen = false,
                 selectedAction = null,
-                previewActions = emptyList(),
+                previewActions = if (autoSelectedPlayerId != null) {
+                    val p = finalPlayers.find { it.id == autoSelectedPlayerId }
+                    if (p != null) generateActions(p, currentState) else emptyList()
+                } else emptyList(),
                 uiMessage = message,
                 matchMinute = nextMinute,
                 isHalfTime = isHalfTime,

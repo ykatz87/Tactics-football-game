@@ -49,6 +49,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -58,12 +59,16 @@ import androidx.compose.material.icons.filled.SwapHoriz
 import com.example.ui.SubstitutionDialog
 import com.example.ui.PlayerVisualRegistry
 import com.example.ui.drawLivingPlayerFigurine
+import com.example.ui.PlayerActionStance
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.LinearEasing
 import com.example.PitchGridConfig
 import com.example.PitchGridEvaluator
 import com.example.MovementTile
 import com.example.PassingTile
 import com.example.GameMode
+import com.example.CameraAngleMode
 import com.example.ui.MainMenuScreen
 
 import androidx.compose.ui.graphics.ImageBitmap
@@ -427,8 +432,13 @@ fun MatchScreen(viewModel: GameViewModel, gameState: GameState) {
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .padding(horizontal = 8.dp) // less padding to match image
-                .background(Color(0xFF1E1E1E), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)) // Pitch green will be drawn inside
+                .padding(horizontal = 4.dp)
+                .background(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(Color(0xFF070B14), Color(0xFF0F172A), Color(0xFF080D1A))
+                    ),
+                    shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
+                )
         ) {
             PitchCanvas(
                 gameState = gameState,
@@ -442,49 +452,128 @@ fun MatchScreen(viewModel: GameViewModel, gameState: GameState) {
                 onGridClick = { x, y -> viewModel.onGridCellSelected(x, y) }
             )
 
-            // Tactical Pitch Grid HUD Chip (Speed Stat & Coordinate status)
-            if (gameState.selectedPlayerId != null) {
-                val selPlayer = gameState.players.find { it.id == gameState.selectedPlayerId }
-                if (selPlayer != null) {
-                    val coordLabel = PitchGridConfig.getCoordinateLabel(selPlayer.position.x, selPlayer.position.y)
-                    val oppWithBall = gameState.players.find { it.id == gameState.playerWithBallId && it.team != selPlayer.team }
-                    val tackleDist = if (oppWithBall != null) maxOf(abs(selPlayer.position.x - oppWithBall.position.x), abs(selPlayer.position.y - oppWithBall.position.y)) else 999
-                    val tackleHintSuffix = if (oppWithBall != null && tackleDist <= selPlayer.moveRange) {
-                        val costStr = if (tackleDist <= 1) "מהלך 1" else if (gameState.actionsLeft >= 2) "2 מהלכים" else "מהלך 1"
-                        " • ⚔️ לחץ על ${oppWithBall.name} לחטיפה/תיקול ($costStr)!"
-                    } else ""
+            // Unified Broadcast Top Control & Commentary Bar (Clean, single-row layout that never overlaps)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Commentary Ticker OR Selected Player Status Chip
+                Box(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .padding(end = 6.dp)
+                ) {
+                    if (gameState.selectedPlayerId != null) {
+                        // Tactical Pitch Grid HUD Chip (Speed Stat & Coordinate status)
+                        val selPlayer = gameState.players.find { it.id == gameState.selectedPlayerId }
+                        if (selPlayer != null) {
+                            val coordLabel = PitchGridConfig.getCoordinateLabel(selPlayer.position.x, selPlayer.position.y)
+                            val oppWithBall = gameState.players.find { it.id == gameState.playerWithBallId && it.team != selPlayer.team }
+                            val tackleDist = if (oppWithBall != null) maxOf(abs(selPlayer.position.x - oppWithBall.position.x), abs(selPlayer.position.y - oppWithBall.position.y)) else 999
+                            val tackleHintSuffix = if (oppWithBall != null && tackleDist <= selPlayer.moveRange) {
+                                val costStr = if (tackleDist <= 1) "מהלך 1" else if (gameState.actionsLeft >= 2) "2 מהלכים" else "מהלך 1"
+                                " • ⚔️ לחץ לחטיפה ($costStr)"
+                            } else ""
 
-                    val actionHint = when (gameState.selectedAction) {
-                        ActionType.MOVE -> "⚡ מהירות: ${selPlayer.currentSpeed} • ${selPlayer.moveRange} משבצות מודגשות לתנועה$tackleHintSuffix"
-                        ActionType.DRIBBLE -> "⚡ מהירות כדרור: ${selPlayer.currentSpeed} • ${selPlayer.moveRange} משבצות מודגשות לכדרור"
-                        ActionType.PASS -> "🎯 מסירה: ${selPlayer.currentPassing} • טווח: ${selPlayer.passRange} משבצות"
-                        ActionType.SHOOT -> {
-                            val eval = PitchGridEvaluator.calculateShootEvaluation(gameState, selPlayer)
-                            "🎯 בעיטה לשער! סיכוי: ${eval.finalProbability}% (בעיטה: ${eval.shootingStat} | מרחק: ${String.format("%.1f", eval.distanceToGoal)} משבצות) • לחץ על השער לביצוע"
+                            val actionHint = when (gameState.selectedAction) {
+                                ActionType.MOVE -> "⚡ ${selPlayer.currentSpeed} • ${selPlayer.moveRange} משבצות$tackleHintSuffix"
+                                ActionType.DRIBBLE -> "⚡ כדרור: ${selPlayer.currentSpeed} • ${selPlayer.moveRange} משבצות"
+                                ActionType.PASS -> "🎯 מסירה: ${selPlayer.currentPassing} • טווח: ${selPlayer.passRange}"
+                                ActionType.SHOOT -> "🎯 בעיטה לשער! לחץ על השער לביצוע"
+                                ActionType.TACKLE -> "🛡️ תיקול (הגנה: ${selPlayer.currentDefense})"
+                                null -> if (selPlayer.team == gameState.currentTurn) "⚡ מהירות: ${selPlayer.currentSpeed}$tackleHintSuffix" else "יריב (${selPlayer.roleIcon})"
+                            }
+
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = Color(0xFF0F172A).copy(alpha = 0.94f),
+                                border = BorderStroke(1.2.dp, Color(0xFF10B981).copy(alpha = 0.75f)),
+                                shadowElevation = 6.dp
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.5.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${selPlayer.roleIcon} ${selPlayer.name} [$coordLabel] • $actionHint",
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                         }
-                        ActionType.TACKLE -> "🛡️ תיקול יריב (הגנה: ${selPlayer.currentDefense})"
-                        null -> if (selPlayer.team == gameState.currentTurn) "⚡ מהירות: ${selPlayer.currentSpeed} • ${selPlayer.moveRange} משבצות מודגשות לתנועה$tackleHintSuffix" else "שחקן יריב (${selPlayer.roleIcon})"
-                    }
-                    Surface(
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(top = 8.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        color = Color(0xFF0F172A).copy(alpha = 0.92f),
-                        border = BorderStroke(1.2.dp, Color(0xFF10B981).copy(alpha = 0.7f)),
-                        shadowElevation = 8.dp
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                    } else if (gameState.uiMessage == null && !gameState.isHalfTime && !gameState.isMatchOver) {
+                        // Live Broadcast Tactical Commentary Ticker
+                        val carrier = gameState.players.find { it.id == gameState.playerWithBallId }
+                        val isHome = gameState.currentTurn == Team.HOME
+                        val commentaryText = when {
+                            gameState.activeSetPiece?.type == SetPieceType.CORNER -> "🚩 כדור קרן מסוכן! כל הבלמים עולים לרחבה..."
+                            gameState.activeSetPiece?.type == SetPieceType.THROW_IN -> "🤾 הוצאת חוץ מהירה, חיפוש שחקן פנוי..."
+                            gameState.tacticalDuel != null -> "⚔️ מאבק ראש בראש על הכדור! מי ייצא מנצח?"
+                            gameState.selectedAction == ActionType.SHOOT -> "🎯 עמדת בעיטה מסוכנת! השער על הכוונת..."
+                            carrier != null && ((isHome && carrier.position.y <= 3) || (!isHome && carrier.position.y >= 11)) -> "🔥 ${carrier.name} עמוק ברחבה! הזדמנות פז להבקעה..."
+                            carrier != null && ((isHome && carrier.position.y <= 7) || (!isHome && carrier.position.y >= 7)) -> "⚡ ${carrier.name} מנהל התקפה בחצי של היריב..."
+                            carrier != null -> "⚽ ${carrier.name} שולט בכדור, הנעת כדור מסודרת..."
+                            isHome -> "🧠 תור ישראל: תכנון מהלך טקטי ופתיחת קווי מסירה..."
+                            else -> "🛡️ לחץ טקטי על הכדור, סגירת שטחים בהגנה..."
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = Color(0xFF0F172A).copy(alpha = 0.90f),
+                            border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.40f)),
+                            shadowElevation = 6.dp
                         ) {
-                            Text(
-                                text = "${selPlayer.roleIcon} ${selPlayer.name} [$coordLabel] • $actionHint",
-                                color = Color.White,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.5.dp)
+                            ) {
+                                Text(text = "🎙️", fontSize = 10.5.sp)
+                                Text(
+                                    text = commentaryText,
+                                    color = Color(0xFFE2E8F0),
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                            }
                         }
+                    }
+                }
+
+                // Dynamic Camera Presets Selector Button
+                Surface(
+                    onClick = { viewModel.cycleCameraMode() },
+                    shape = RoundedCornerShape(16.dp),
+                    color = when (gameState.cameraMode) {
+                        CameraAngleMode.BROADCAST -> Color(0xFF0284C7).copy(alpha = 0.95f)
+                        CameraAngleMode.END_TO_END -> Color(0xFF7C3AED).copy(alpha = 0.95f)
+                        CameraAngleMode.ACTION_CAM -> Color(0xFFD97706).copy(alpha = 0.95f)
+                        CameraAngleMode.TACTICAL_2D -> Color(0xFF334155).copy(alpha = 0.92f)
+                    },
+                    border = BorderStroke(1.2.dp, Color.White.copy(alpha = 0.5f)),
+                    shadowElevation = 6.dp
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.5.dp)
+                    ) {
+                        Text(
+                            text = "${gameState.cameraMode.icon} ${gameState.cameraMode.label}",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
                     }
                 }
             }
@@ -526,12 +615,17 @@ fun MatchScreen(viewModel: GameViewModel, gameState: GameState) {
                 )
             }
 
-            // Toast / Goal UI Message
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            // Broadcast Match Ticker / Goal UI Message - Positioned cleanly at TOP OF SCREEN to keep pitch 100% visible
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 8.dp, start = 12.dp, end = 12.dp),
+                contentAlignment = Alignment.TopCenter
+            ) {
                 androidx.compose.animation.AnimatedVisibility(
                     visible = gameState.uiMessage != null,
-                    enter = fadeIn(animationSpec = tween(200)) + scaleIn(initialScale = 0.7f, animationSpec = tween(300)),
-                    exit = fadeOut(animationSpec = tween(300)) + scaleOut(targetScale = 1.1f, animationSpec = tween(300))
+                    enter = fadeIn(animationSpec = tween(180)) + slideInVertically(initialOffsetY = { -it }, animationSpec = tween(250)),
+                    exit = fadeOut(animationSpec = tween(200)) + slideOutVertically(targetOffsetY = { -it }, animationSpec = tween(200))
                 ) {
                     gameState.uiMessage?.let { msg ->
                         val isGoal = msg.contains("שער") || msg.contains("גול")
@@ -580,30 +674,32 @@ fun MatchScreen(viewModel: GameViewModel, gameState: GameState) {
                         }
 
                         Surface(
-                            color = Color(0xFF0F172A).copy(alpha = 0.95f),
-                            shape = RoundedCornerShape(20.dp),
-                            border = androidx.compose.foundation.BorderStroke(2.5.dp, borderColor),
-                            shadowElevation = 16.dp,
-                            modifier = Modifier.padding(24.dp)
+                            color = Color(0xFF0F172A).copy(alpha = 0.96f),
+                            shape = RoundedCornerShape(16.dp),
+                            border = androidx.compose.foundation.BorderStroke(2.dp, borderColor),
+                            shadowElevation = 14.dp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .widthIn(max = 500.dp)
                         ) {
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.padding(horizontal = 28.dp, vertical = 20.dp)
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
                             ) {
                                 if (titleBanner != null) {
                                     Text(
                                         text = titleBanner,
                                         color = titleColor,
-                                        fontSize = 24.sp,
+                                        fontSize = 16.sp,
                                         fontWeight = FontWeight.ExtraBold,
-                                        letterSpacing = 1.sp
+                                        letterSpacing = 0.5.sp
                                     )
-                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Spacer(modifier = Modifier.height(2.dp))
                                 }
                                 Text(
                                     text = msg,
                                     color = Color.White,
-                                    fontSize = if (isGoal) 22.sp else 17.sp,
+                                    fontSize = if (isGoal) 17.sp else 13.5.sp,
                                     fontWeight = FontWeight.Bold,
                                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                 )
@@ -715,7 +811,8 @@ data class PlayerAnimData(
     val elevation: Float,
     val isMoving: Boolean,
     val isSelected: Boolean,
-    val idlePhase: Int
+    val idlePhase: Int,
+    val stance: PlayerActionStance = PlayerActionStance.IDLE
 )
 
 @Composable
@@ -761,7 +858,27 @@ fun PitchCanvas(
         // Gentle rhythmic idle breathing bounce
         val idlePhase = (player.id * 37) % 100
         val isSelected = player.id == gameState.selectedPlayerId
-        PlayerAnimData(player, animatedX, animatedY, animatedElevation, isMoving, isSelected, idlePhase)
+
+        val isGkSaving = gameState.gkSaveEffect != null && gameState.gkSaveEffect.keeperId == player.id
+        val isGoalCelebration = gameState.ballTrajectory?.isGoal == true
+        val isKicking = gameState.ballTrajectory != null && (player.id == gameState.selectedPlayerId || (gameState.ballTrajectory.isShot && player.id == gameState.playerWithBallId))
+        val isTackling = gameState.tacticalDuel != null && (player.name == gameState.tacticalDuel.defenderName)
+
+        val stance = when {
+            isGkSaving -> {
+                val targetX = gameState.gkSaveEffect?.diveTargetPos?.x ?: player.position.x
+                if (targetX < player.position.x) PlayerActionStance.GK_DIVE_LEFT else PlayerActionStance.GK_DIVE_RIGHT
+            }
+            isGoalCelebration && (player.team == if ((gameState.ballTrajectory?.targetY ?: 0f) < 7f) Team.HOME else Team.AWAY) -> {
+                PlayerActionStance.CELEBRATION
+            }
+            isTackling -> PlayerActionStance.SLIDE_TACKLE
+            isKicking -> PlayerActionStance.KICKING
+            isMoving -> PlayerActionStance.RUNNING
+            else -> PlayerActionStance.IDLE
+        }
+
+        PlayerAnimData(player, animatedX, animatedY, animatedElevation, isMoving, isSelected, idlePhase, stance)
     }
 
     // Create animated positions for the ball with snappy spring dynamics
@@ -872,15 +989,116 @@ fun PitchCanvas(
         }
     }
 
+    val is3D = gameState.is3DView && gameState.cameraMode != CameraAngleMode.TACTICAL_2D
+
+    // 1. Goal Threat Dynamic Zoom Detection
+    val isGoalThreat = is3D && (
+        (ballYTarget <= 3.5f || ballYTarget >= 11.5f) ||
+        (gameState.selectedAction == ActionType.SHOOT) ||
+        (gameState.ballTrajectory?.isShot == true)
+    )
+    val isGoalMoment = gameState.ballTrajectory?.isGoal == true ||
+        (gameState.uiMessage != null && (gameState.uiMessage.contains("שער") || gameState.uiMessage.contains("גול")))
+
+    // 2. Compute Camera Target Values based on Camera Mode & Dynamic Context
+    val baseTilt = when (gameState.cameraMode) {
+        CameraAngleMode.BROADCAST -> if (isGoalMoment) 30f else if (isGoalThreat) 27f else 23f
+        CameraAngleMode.END_TO_END -> if (isGoalMoment) 38f else 42f
+        CameraAngleMode.ACTION_CAM -> if (isGoalMoment) 30f else if (isGoalThreat) 28f else 25f
+        CameraAngleMode.TACTICAL_2D -> 0f
+    }
+    val baseScaleX = when (gameState.cameraMode) {
+        CameraAngleMode.BROADCAST -> if (isGoalMoment) 1.07f else if (isGoalThreat) 1.05f else 1.02f
+        CameraAngleMode.END_TO_END -> if (isGoalMoment) 1.12f else if (isGoalThreat) 1.08f else 1.04f
+        CameraAngleMode.ACTION_CAM -> if (isGoalMoment) 1.18f else if (isGoalThreat) 1.15f else 1.10f
+        CameraAngleMode.TACTICAL_2D -> 1.0f
+    }
+    val baseScaleY = when (gameState.cameraMode) {
+        CameraAngleMode.BROADCAST -> if (isGoalMoment) 1.05f else if (isGoalThreat) 1.03f else 1.01f
+        CameraAngleMode.END_TO_END -> if (isGoalMoment) 1.08f else if (isGoalThreat) 1.05f else 1.02f
+        CameraAngleMode.ACTION_CAM -> if (isGoalMoment) 1.14f else if (isGoalThreat) 1.12f else 1.06f
+        CameraAngleMode.TACTICAL_2D -> 1.0f
+    }
+    val baseTransY = when (gameState.cameraMode) {
+        CameraAngleMode.BROADCAST -> {
+            if (isGoalMoment) -8f
+            else if (isGoalThreat) (if (ballYTarget <= 5f) 12f else -16f)
+            else -6f
+        }
+        CameraAngleMode.END_TO_END -> {
+            if (isGoalMoment) -16f
+            else if (isGoalThreat) (if (ballYTarget <= 5f) 10f else -22f)
+            else -12f
+        }
+        CameraAngleMode.ACTION_CAM -> {
+            // Dynamic ball tracking pan along vertical axis
+            (7f - animatedBallY).coerceIn(-4.5f, 4.5f) * 12f
+        }
+        CameraAngleMode.TACTICAL_2D -> 0f
+    }
+    val baseTransX = when (gameState.cameraMode) {
+        CameraAngleMode.ACTION_CAM -> {
+            // Dynamic ball tracking pan along horizontal axis
+            (5f - animatedBallX).coerceIn(-3.5f, 3.5f) * 12f
+        }
+        else -> 0f
+    }
+
+    val animatedTiltX by animateFloatAsState(
+        targetValue = baseTilt,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioLowBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "pitchTilt"
+    )
+    val animatedScaleX by animateFloatAsState(
+        targetValue = baseScaleX,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioLowBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "pitchScaleX"
+    )
+    val animatedScaleY by animateFloatAsState(
+        targetValue = baseScaleY,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioLowBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "pitchScaleY"
+    )
+    val animatedTranslationY by animateFloatAsState(
+        targetValue = baseTransY,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioLowBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "pitchTranslationY"
+    )
+    val animatedTranslationX by animateFloatAsState(
+        targetValue = baseTransX,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioLowBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "pitchTranslationX"
+    )
+
+    val animTime = animClockMs.toLong()
+
     Canvas(
         modifier = Modifier
             .fillMaxSize()
             .clip(RoundedCornerShape(14.dp))
             .graphicsLayer {
-                rotationX = 0f
-                scaleY = 1.0f
-                scaleX = 1.0f
-                shadowElevation = 8.dp.toPx()
+                cameraDistance = 22f * density
+                rotationX = animatedTiltX
+                scaleX = animatedScaleX
+                scaleY = animatedScaleY
+                translationX = animatedTranslationX
+                translationY = animatedTranslationY
+                shadowElevation = if (is3D) 20.dp.toPx() else 8.dp.toPx()
             }
             .pointerInput(Unit) {
                 detectTapGestures(
@@ -950,17 +1168,152 @@ fun PitchCanvas(
         val cellWidth = size.width / gridWidth
         val cellHeight = size.height / gridHeight
 
-        // 1. Draw Clean Lush Grass Turf with alternating lawn stripes
-        val stripeCount = 15
-        val stripeHeight = size.height / stripeCount
-        for (i in 0 until stripeCount) {
-            val stripeColor = if (i % 2 == 0) Color(0xFF1E7E34) else Color(0xFF238E3B)
+        // 0. 3D Stadium Grandstand & Horizon (When in 3D Mode)
+        if (is3D) {
+            val stadiumHorizonH = cellHeight * 1.35f
+            // Stadium Grandstand Wall
             drawRect(
-                color = stripeColor,
-                topLeft = Offset(0f, i * stripeHeight),
-                size = Size(size.width, stripeHeight)
+                brush = Brush.verticalGradient(
+                    colors = listOf(Color(0xFF090D16), Color(0xFF1E293B)),
+                    startY = 0f,
+                    endY = stadiumHorizonH
+                ),
+                topLeft = Offset(0f, 0f),
+                size = Size(size.width, stadiumHorizonH)
+            )
+            // Cheering crowd tiers dots
+            for (cx in 0 until (size.width / 16f).toInt()) {
+                val crowdX = cx * 16f + 8f
+                val crowdY1 = stadiumHorizonH * 0.28f
+                val crowdY2 = stadiumHorizonH * 0.52f
+                val dotColor1 = if (cx % 3 == 0) Color(0xFF38BDF8) else if (cx % 3 == 1) Color(0xFFFFFFFF) else Color(0xFFF59E0B)
+                val dotColor2 = if (cx % 2 == 0) Color(0xFF1D4ED8) else Color(0xFFEF4444)
+                drawCircle(color = dotColor1.copy(alpha = 0.55f), radius = 2.5f, center = Offset(crowdX, crowdY1))
+                drawCircle(color = dotColor2.copy(alpha = 0.45f), radius = 2.2f, center = Offset(crowdX + 4f, crowdY2))
+            }
+            // Dynamic Camera Flashes from Fans & Photographers in the Stands
+            val flashRate = if (isGoalMoment || isGoalThreat) 8 else 4
+            for (f in 0..14) {
+                val seed = f * 7919 + ((animTime / 180).toInt() * 31)
+                if (seed % 9 < flashRate) {
+                    val fx = ((seed * 13 % 1000) / 1000f) * size.width
+                    val fy = ((seed * 7 % 700) / 700f) * (stadiumHorizonH * 0.72f)
+                    val fr = 2.5f + (seed % 4)
+                    drawCircle(Color.White.copy(alpha = 0.95f), radius = fr, center = Offset(fx, fy))
+                    drawCircle(Color(0xFF67E8F9).copy(alpha = 0.40f), radius = fr * 2.5f, center = Offset(fx, fy))
+                }
+            }
+
+            // LED Digital Ribbon Ad Board
+            val ledTop = stadiumHorizonH - cellHeight * 0.28f
+            val ledH = cellHeight * 0.28f
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    colors = listOf(Color(0xFF0284C7), Color(0xFF0369A1), Color(0xFF1D4ED8), Color(0xFF0284C7))
+                ),
+                topLeft = Offset(0f, ledTop),
+                size = Size(size.width, ledH)
+            )
+            val adText = "★ UEFA NATIONS LEAGUE • ISRAEL vs ITALY • 3D STADIUM MATCH ★"
+            val adLayout = textMeasurer.measure(
+                text = adText,
+                style = TextStyle(
+                    color = Color.White.copy(alpha = 0.90f),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.SansSerif
+                )
+            )
+            drawText(
+                textLayoutResult = adLayout,
+                topLeft = Offset((size.width - adLayout.size.width) / 2f, ledTop + (ledH - adLayout.size.height) / 2f)
+            )
+
+            // 4 Corner Stadium Floodlight Towers with Volumetric Night Beams
+            val beamAlpha = 0.24f + (kotlin.math.sin((animTime * 0.002f).toDouble()) * 0.04f).toFloat()
+            // Top-Left Tower
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(Color.White.copy(alpha = beamAlpha + 0.08f), Color(0xFF38BDF8).copy(alpha = 0.12f), Color.Transparent),
+                    center = Offset(15f, 10f),
+                    radius = cellWidth * 4.5f
+                ),
+                radius = cellWidth * 4.5f,
+                center = Offset(15f, 10f)
+            )
+            // Top-Right Tower
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(Color.White.copy(alpha = beamAlpha + 0.08f), Color(0xFF38BDF8).copy(alpha = 0.12f), Color.Transparent),
+                    center = Offset(size.width - 15f, 10f),
+                    radius = cellWidth * 4.5f
+                ),
+                radius = cellWidth * 4.5f,
+                center = Offset(size.width - 15f, 10f)
+            )
+            // Bottom-Left Tower
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(Color.White.copy(alpha = beamAlpha), Color(0xFF38BDF8).copy(alpha = 0.08f), Color.Transparent),
+                    center = Offset(15f, size.height - 10f),
+                    radius = cellWidth * 3.8f
+                ),
+                radius = cellWidth * 3.8f,
+                center = Offset(15f, size.height - 10f)
+            )
+            // Bottom-Right Tower
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(Color.White.copy(alpha = beamAlpha), Color(0xFF38BDF8).copy(alpha = 0.08f), Color.Transparent),
+                    center = Offset(size.width - 15f, size.height - 10f),
+                    radius = cellWidth * 3.8f
+                ),
+                radius = cellWidth * 3.8f,
+                center = Offset(size.width - 15f, size.height - 10f)
             )
         }
+
+        // 1. Draw Premier League 3D Velvet Checkerboard Mowed Turf
+        drawRect(
+            brush = Brush.verticalGradient(
+                colors = listOf(Color(0xFF14532D), Color(0xFF166534), Color(0xFF15803D), Color(0xFF14532D))
+            ),
+            topLeft = Offset(0f, 0f),
+            size = size
+        )
+        // Alternating mowed checkerboard grass tiles with subtle specular light angle
+        for (gx in 0 until gridWidth) {
+            for (gy in 0 until gridHeight) {
+                val isCheckered = (gx + gy) % 2 == 0
+                val tileX = gx * cellWidth
+                val tileY = gy * cellHeight
+                if (isCheckered) {
+                    drawRect(
+                        brush = Brush.linearGradient(
+                            colors = listOf(
+                                Color(0xFF22C55E).copy(alpha = 0.12f),
+                                Color(0xFF4ADE80).copy(alpha = 0.05f),
+                                Color(0xFF15803D).copy(alpha = 0.08f)
+                            ),
+                            start = Offset(tileX, tileY),
+                            end = Offset(tileX + cellWidth, tileY + cellHeight)
+                        ),
+                        topLeft = Offset(tileX, tileY),
+                        size = Size(cellWidth, cellHeight)
+                    )
+                }
+            }
+        }
+        // Central stadium floodlight circular velvet pool
+        drawCircle(
+            brush = Brush.radialGradient(
+                colors = listOf(Color(0xFF86EFAC).copy(alpha = 0.07f), Color.Transparent),
+                center = Offset(size.width / 2f, size.height / 2f),
+                radius = size.width * 0.75f
+            ),
+            radius = size.width * 0.75f,
+            center = Offset(size.width / 2f, size.height / 2f)
+        )
 
         // Discrete, subtle tactical grid lines (quiet and clean so player can easily see cells)
         for (gx in 0..gridWidth) {
@@ -1074,33 +1427,155 @@ fun PitchCanvas(
         drawArc(pitchLineColor, 270f, 90f, false, topLeft = Offset(pitchLeft - cornerArcSize.width / 2f, pitchBottom - cornerArcSize.height / 2f), size = cornerArcSize, style = Stroke(lineWidth))
         drawArc(pitchLineColor, 180f, 90f, false, topLeft = Offset(pitchRight - cornerArcSize.width / 2f, pitchBottom - cornerArcSize.height / 2f), size = cornerArcSize, style = Stroke(lineWidth))
 
-        // Goals (Top & Bottom)
+        if (is3D) {
+            val flagH = cellHeight * 0.42f
+            val windWave = (kotlin.math.sin((animTime * 0.006f).toDouble()) * 3.5f).toFloat()
+            listOf(
+                Offset(pitchLeft, pitchTop),
+                Offset(pitchRight, pitchTop),
+                Offset(pitchLeft, pitchBottom),
+                Offset(pitchRight, pitchBottom)
+            ).forEach { pt ->
+                // Flexible spring pole
+                drawLine(
+                    brush = Brush.verticalGradient(listOf(Color(0xFFE2E8F0), Color(0xFF94A3B8)), pt.y - flagH, pt.y),
+                    start = pt,
+                    end = Offset(pt.x + windWave * 0.2f, pt.y - flagH),
+                    strokeWidth = 2.4f
+                )
+                // Gold finial ball on top of pole
+                drawCircle(Color(0xFFFFD700), radius = 2f, center = Offset(pt.x + windWave * 0.2f, pt.y - flagH))
+                // Fluttering triangle flag
+                val flagPath = Path().apply {
+                    moveTo(pt.x + windWave * 0.2f, pt.y - flagH)
+                    lineTo(pt.x + 12f + windWave, pt.y - flagH + 4f)
+                    lineTo(pt.x + windWave * 0.2f, pt.y - flagH + 8.5f)
+                    close()
+                }
+                drawPath(flagPath, brush = Brush.horizontalGradient(listOf(Color(0xFFEF4444), Color(0xFFDC2626))))
+            }
+        }
+
+        // 2.4 Goals (Top & Bottom) with 3D Dynamic Net Physics & Ripple Waves
         val goalW = cellWidth * 3f
         val goalLeft = (size.width - goalW) / 2f
-        // Top Goal Net
+        val goalRight = goalLeft + goalW
+        val baseGoalNetDepth = if (is3D) cellHeight * 0.65f else cellHeight * 0.45f
+
+        // Check if goal was scored into either net
+        val isTopGoalHit = (gameState.ballTrajectory?.isGoal == true && (gameState.ballTrajectory.targetY <= 2.5f)) ||
+            (gameState.uiMessage != null && gameState.uiMessage.contains("שער") && (gameState.ballPosition?.y ?: 7) <= 3)
+        val isBotGoalHit = (gameState.ballTrajectory?.isGoal == true && (gameState.ballTrajectory.targetY >= 11.5f)) ||
+            (gameState.uiMessage != null && gameState.uiMessage.contains("שער") && (gameState.ballPosition?.y ?: 7) >= 11)
+
+        val topNetVibration = if (isTopGoalHit) (kotlin.math.sin((animTime * 0.045f).toDouble()) * 6.5f).toFloat() else 0f
+        val botNetVibration = if (isBotGoalHit) (kotlin.math.sin((animTime * 0.045f).toDouble()) * 6.5f).toFloat() else 0f
+
+        val topNetBackY = pitchTop - baseGoalNetDepth - (if (isTopGoalHit) 12f + topNetVibration else 0f)
+        val botNetBackY = pitchBottom + baseGoalNetDepth + (if (isBotGoalHit) 12f + botNetVibration else 0f)
+
+        // --- TOP GOAL (Away Net) ---
         drawRect(
-            color = Color.White.copy(alpha = 0.20f),
-            topLeft = Offset(goalLeft, pitchTop - cellHeight * 0.4f),
-            size = Size(goalW, cellHeight * 0.4f)
+            color = Color.Black.copy(alpha = if (is3D) 0.35f else 0.20f),
+            topLeft = Offset(goalLeft, topNetBackY),
+            size = Size(goalW, pitchTop - topNetBackY)
         )
-        drawRect(
-            color = Color.White,
-            topLeft = Offset(goalLeft, pitchTop - cellHeight * 0.4f),
-            size = Size(goalW, cellHeight * 0.4f),
-            style = Stroke(width = 2f)
+        // Diamond Netting Mesh (angled crossing lines with wave distortion)
+        val netMeshCount = 7
+        for (i in 0..netMeshCount) {
+            val ratio = i / netMeshCount.toFloat()
+            val frontX = goalLeft + ratio * goalW
+            val backX = goalLeft + 12f + ratio * (goalW - 24f)
+            val wave = if (isTopGoalHit) (kotlin.math.sin((animTime * 0.05f + ratio * 6f).toDouble()) * 4f).toFloat() else 0f
+            drawLine(
+                color = Color.White.copy(alpha = if (isTopGoalHit) 0.65f else 0.38f),
+                start = Offset(frontX, pitchTop),
+                end = Offset(backX + wave, topNetBackY),
+                strokeWidth = if (isTopGoalHit) 1.5f else 1.1f
+            )
+        }
+        for (k in 1..4) {
+            val depthRatio = k / 5f
+            val currY = pitchTop - depthRatio * (pitchTop - topNetBackY)
+            val currLeft = goalLeft + depthRatio * 10f
+            val currRight = goalRight - depthRatio * 10f
+            val horizWave = if (isTopGoalHit) (kotlin.math.cos((animTime * 0.04f + k).toDouble()) * 5f).toFloat() else 0f
+            drawLine(
+                color = Color.White.copy(alpha = if (isTopGoalHit) 0.60f else 0.32f),
+                start = Offset(currLeft, currY + horizWave),
+                end = Offset(currRight, currY + horizWave),
+                strokeWidth = 1.1f
+            )
+        }
+        // White Steel Posts & Crossbar with 3D tubular lighting
+        val postRadius = if (is3D) 5f else 3.5f
+        drawLine(Color(0xFFE2E8F0), Offset(goalLeft, pitchTop), Offset(goalLeft + 12f, topNetBackY), strokeWidth = 2.5f)
+        drawLine(Color(0xFFE2E8F0), Offset(goalRight, pitchTop), Offset(goalRight - 12f, topNetBackY), strokeWidth = 2.5f)
+        drawLine(Color.White.copy(alpha = 0.85f), Offset(goalLeft + 12f, topNetBackY), Offset(goalRight - 12f, topNetBackY), strokeWidth = 2.5f)
+        // Top Crossbar
+        drawLine(
+            brush = Brush.verticalGradient(
+                colors = listOf(Color.White, Color(0xFFCBD5E1), Color(0xFF64748B)),
+                startY = pitchTop - 3f,
+                endY = pitchTop + 3f
+            ),
+            start = Offset(goalLeft, pitchTop),
+            end = Offset(goalRight, pitchTop),
+            strokeWidth = if (is3D) 5f else 3f
         )
-        // Bottom Goal Net
+        drawLine(Color.White, Offset(goalLeft, pitchTop - 1f), Offset(goalRight, pitchTop - 1f), strokeWidth = 1.2f)
+        drawCircle(Color.White, radius = postRadius, center = Offset(goalLeft, pitchTop))
+        drawCircle(Color.White, radius = postRadius, center = Offset(goalRight, pitchTop))
+
+        // --- BOTTOM GOAL (Home Net) ---
         drawRect(
-            color = Color.White.copy(alpha = 0.20f),
+            color = Color.Black.copy(alpha = if (is3D) 0.35f else 0.20f),
             topLeft = Offset(goalLeft, pitchBottom),
-            size = Size(goalW, cellHeight * 0.4f)
+            size = Size(goalW, botNetBackY - pitchBottom)
         )
-        drawRect(
-            color = Color.White,
-            topLeft = Offset(goalLeft, pitchBottom),
-            size = Size(goalW, cellHeight * 0.4f),
-            style = Stroke(width = 2f)
+        // Diamond Netting Mesh (angled crossing lines with wave distortion)
+        for (i in 0..netMeshCount) {
+            val ratio = i / netMeshCount.toFloat()
+            val frontX = goalLeft + ratio * goalW
+            val backX = goalLeft + 12f + ratio * (goalW - 24f)
+            val wave = if (isBotGoalHit) (kotlin.math.sin((animTime * 0.05f + ratio * 6f).toDouble()) * 4f).toFloat() else 0f
+            drawLine(
+                color = Color.White.copy(alpha = if (isBotGoalHit) 0.65f else 0.38f),
+                start = Offset(frontX, pitchBottom),
+                end = Offset(backX + wave, botNetBackY),
+                strokeWidth = if (isBotGoalHit) 1.5f else 1.1f
+            )
+        }
+        for (k in 1..4) {
+            val depthRatio = k / 5f
+            val currY = pitchBottom + depthRatio * (botNetBackY - pitchBottom)
+            val currLeft = goalLeft + depthRatio * 10f
+            val currRight = goalRight - depthRatio * 10f
+            val horizWave = if (isBotGoalHit) (kotlin.math.cos((animTime * 0.04f + k).toDouble()) * 5f).toFloat() else 0f
+            drawLine(
+                color = Color.White.copy(alpha = if (isBotGoalHit) 0.60f else 0.32f),
+                start = Offset(currLeft, currY + horizWave),
+                end = Offset(currRight, currY + horizWave),
+                strokeWidth = 1.1f
+            )
+        }
+        drawLine(Color(0xFFE2E8F0), Offset(goalLeft, pitchBottom), Offset(goalLeft + 12f, botNetBackY), strokeWidth = 2.5f)
+        drawLine(Color(0xFFE2E8F0), Offset(goalRight, pitchBottom), Offset(goalRight - 12f, botNetBackY), strokeWidth = 2.5f)
+        drawLine(Color.White.copy(alpha = 0.85f), Offset(goalLeft + 12f, botNetBackY), Offset(goalRight - 12f, botNetBackY), strokeWidth = 2.5f)
+        // Bottom Crossbar
+        drawLine(
+            brush = Brush.verticalGradient(
+                colors = listOf(Color.White, Color(0xFFCBD5E1), Color(0xFF64748B)),
+                startY = pitchBottom - 3f,
+                endY = pitchBottom + 3f
+            ),
+            start = Offset(goalLeft, pitchBottom),
+            end = Offset(goalRight, pitchBottom),
+            strokeWidth = if (is3D) 5f else 3f
         )
+        drawLine(Color.White, Offset(goalLeft, pitchBottom - 1f), Offset(goalRight, pitchBottom - 1f), strokeWidth = 1.2f)
+        drawCircle(Color.White, radius = postRadius, center = Offset(goalLeft, pitchBottom))
+        drawCircle(Color.White, radius = postRadius, center = Offset(goalRight, pitchBottom))
 
         // 2.5 Draw Offside Line (if attacking)
         if (gameState.currentTurn == Team.HOME || gameState.currentTurn == Team.AWAY) {
@@ -1222,98 +1697,51 @@ fun PitchCanvas(
                     val bh = cellHeight - 4f
 
                     // Movement tile fill with pulsing radial alpha
-                    drawRect(
-                        brush = Brush.radialGradient(
-                            colors = listOf(
-                                tileColor.copy(alpha = pulseAlpha * 0.45f + 0.15f),
-                                tileColor.copy(alpha = pulseAlpha * 0.18f + 0.05f)
-                            ),
-                            center = Offset(tCx, tCy),
-                            radius = cellWidth * 0.7f
-                        ),
-                        topLeft = Offset(bx, by),
-                        size = Size(bw, bh)
-                    )
-                    // Tile border
-                    drawRect(
-                        color = tileColor.copy(alpha = 0.90f),
+                    // Clean translucent tactical movement tile
+                    drawRoundRect(
+                        color = tileColor.copy(alpha = if (moveInfo.isContested) 0.22f else 0.12f),
                         topLeft = Offset(bx, by),
                         size = Size(bw, bh),
-                        style = Stroke(width = if (moveInfo.isMaxRange) 2.2f else 1.6f)
-                    )
-                    // Corner brackets
-                    val bracketLen = 7f
-                    drawLine(Color.White, Offset(bx, by), Offset(bx + bracketLen, by), 2f)
-                    drawLine(Color.White, Offset(bx, by), Offset(bx, by + bracketLen), 2f)
-                    drawLine(Color.White, Offset(bx + bw, by + bh), Offset(bx + bw - bracketLen, by + bh), 2f)
-                    drawLine(Color.White, Offset(bx + bw, by), Offset(bx + bw - bracketLen, by), 2f)
-                    drawLine(Color.White, Offset(bx, by + bh), Offset(bx + bracketLen, by + bh), 2f)
-
-                    // Step badge with Movement Safety / Success percentage directly on the tile
-                    val tilePctText = if (moveInfo.isBallPickup) "⚽ 100%" else if (moveInfo.isContested) "⚠️ 70%" else "100%"
-                    val pctBorderColor = if (moveInfo.isContested) Color(0xFFF59E0B) else Color(0xFF10B981)
-                    val stepLayout = textMeasurer.measure(
-                        tilePctText,
-                        TextStyle(color = Color.White, fontSize = (cellWidth * 0.16f).toSp(), fontWeight = FontWeight.Black)
-                    )
-                    val badgeW = stepLayout.size.width + 10f
-                    val badgeH = stepLayout.size.height + 4f
-                    drawRoundRect(
-                        color = Color(0xFF0F172A).copy(alpha = 0.88f),
-                        topLeft = Offset(bx + 3f, by + 3f),
-                        size = Size(badgeW, badgeH),
                         cornerRadius = androidx.compose.ui.geometry.CornerRadius(4f, 4f)
                     )
                     drawRoundRect(
-                        color = pctBorderColor,
-                        topLeft = Offset(bx + 3f, by + 3f),
-                        size = Size(badgeW, badgeH),
+                        color = tileColor.copy(alpha = if (moveInfo.isMaxRange) 0.60f else 0.35f),
+                        topLeft = Offset(bx, by),
+                        size = Size(bw, bh),
                         cornerRadius = androidx.compose.ui.geometry.CornerRadius(4f, 4f),
-                        style = Stroke(width = 1.2f)
-                    )
-                    drawText(
-                        textLayoutResult = stepLayout,
-                        topLeft = Offset(bx + 8f, by + 5f)
+                        style = Stroke(width = if (moveInfo.isMaxRange) 1.5f else 1.0f)
                     )
 
-                    // If max range tile for this player's Speed stat, render "MAX" badge in bottom right
-                    if (moveInfo.isMaxRange) {
-                        val maxLayout = textMeasurer.measure(
-                            "MAX",
-                            TextStyle(color = tileColor, fontSize = (cellWidth * 0.12f).toSp(), fontWeight = FontWeight.ExtraBold)
-                        )
-                        drawText(
-                            textLayoutResult = maxLayout,
-                            topLeft = Offset(bx + bw - maxLayout.size.width - 4f, by + bh - maxLayout.size.height - 3f)
-                        )
-                    }
-
-                    // Ball pickup indicator on tile
+                    // Only show indicator badges on tiles with special status (ball pickup or contested risk)
                     if (moveInfo.isBallPickup) {
-                        val ballLayout = textMeasurer.measure("⚽", TextStyle(fontSize = 12.sp))
+                        val ballLayout = textMeasurer.measure("⚽ קח כדור", TextStyle(color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold))
+                        val bW = ballLayout.size.width + 8f
+                        val bH = ballLayout.size.height + 4f
+                        drawRoundRect(
+                            color = Color(0xFF0F172A).copy(alpha = 0.90f),
+                            topLeft = Offset(tCx - bW / 2f, by + 2f),
+                            size = Size(bW, bH),
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(3f, 3f)
+                        )
                         drawText(
                             textLayoutResult = ballLayout,
-                            topLeft = Offset(tCx - ballLayout.size.width / 2f, tCy - ballLayout.size.height / 2f)
+                            topLeft = Offset(tCx - bW / 2f + 4f, by + 4f)
+                        )
+                    } else if (moveInfo.isContested) {
+                        val alertLayout = textMeasurer.measure("⚠️ 70%", TextStyle(color = Color(0xFFFDE047), fontSize = 8.5.sp, fontWeight = FontWeight.ExtraBold))
+                        val aW = alertLayout.size.width + 6f
+                        val aH = alertLayout.size.height + 3f
+                        drawRoundRect(
+                            color = Color(0xFF0F172A).copy(alpha = 0.88f),
+                            topLeft = Offset(bx + bw - aW - 2f, by + 2f),
+                            size = Size(aW, aH),
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(3f, 3f)
+                        )
+                        drawText(
+                            textLayoutResult = alertLayout,
+                            topLeft = Offset(bx + bw - aW + 1f, by + 3.5f)
                         )
                     }
-
-                    // Opponent pressure indicator on tile
-                    if (moveInfo.isContested) {
-                        drawCircle(
-                            color = Color(0xFFEF4444).copy(alpha = 0.9f),
-                            radius = 4.5f,
-                            center = Offset(bx + bw - 7f, by + 7f)
-                        )
-                    }
-
-                    // Dynamic dashed vector line from player to movement coordinate
-                    drawLine(
-                        color = tileColor.copy(alpha = 0.55f),
-                        start = Offset(pCx, pCy),
-                        end = Offset(tCx, tCy),
-                        strokeWidth = if (moveInfo.isMaxRange) 2f else 1.5f,
-                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f), 0f)
-                    )
                 }
             }
 
@@ -1474,47 +1902,6 @@ fun PitchCanvas(
                 }
             }
 
-            // 3.3 Goal Shoot Target Reticle directly on Goal Net when Ball Carrier selected
-            if (selectedPlayer.id == gameState.playerWithBallId) {
-                val shootEval = PitchGridEvaluator.calculateShootEvaluation(gameState, selectedPlayer)
-                val targetGoalY = if (selectedPlayer.team == Team.HOME) pitchTop else pitchBottom
-                val goalCx = size.width / 2f
-                val goalCy = if (selectedPlayer.team == Team.HOME) pitchTop + cellHeight * 0.75f else pitchBottom - cellHeight * 0.75f
-                val shootColor = if (shootEval.finalProbability >= 60) Color(0xFF10B981) else Color(0xFFEF4444)
-
-                // Pulsing goal target circle
-                drawCircle(
-                    color = shootColor.copy(alpha = pulseAlpha * 0.35f + 0.35f),
-                    radius = cellWidth * 0.85f,
-                    center = Offset(goalCx, goalCy),
-                    style = Stroke(width = 2.5f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 4f), 0f))
-                )
-                // Goal shoot badge
-                val sBadge = textMeasurer.measure(
-                    "🎯 שער: ${shootEval.finalProbability}%",
-                    TextStyle(color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black)
-                )
-                val sW = sBadge.size.width + 16f
-                val sH = sBadge.size.height + 8f
-                drawRoundRect(
-                    color = Color(0xFF0F172A).copy(alpha = 0.95f),
-                    topLeft = Offset(goalCx - sW / 2f, goalCy - sH / 2f),
-                    size = Size(sW, sH),
-                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(6f, 6f)
-                )
-                drawRoundRect(
-                    color = shootColor,
-                    topLeft = Offset(goalCx - sW / 2f, goalCy - sH / 2f),
-                    size = Size(sW, sH),
-                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(6f, 6f),
-                    style = Stroke(width = 1.5f)
-                )
-                drawText(
-                    textLayoutResult = sBadge,
-                    topLeft = Offset(goalCx - sW / 2f + 8f, goalCy - sH / 2f + 4f)
-                )
-            }
-
             // 3.3 Shooting Target based on Shooting stat and distance to goal
             if (gameState.selectedAction == ActionType.SHOOT) {
                 val shootEval = PitchGridEvaluator.calculateShootEvaluation(gameState, selectedPlayer)
@@ -1597,42 +1984,12 @@ fun PitchCanvas(
                     textLayoutResult = goalBadgeLayout,
                     topLeft = Offset(gbLeft + 8f, gbTop + 4f)
                 )
-
-                // 3.3.5 Mid-Trajectory Probability & Distance Breakdown Card
-                val midX = (pCx + targetGoalCenterX) / 2f
-                val midY = (pCy + targetGoalY) / 2f
-                val distFormatted = String.format("%.1f", shootEval.distanceToGoal)
-                val probCardText = "🎯 ${shootEval.finalProbability}% • בעיטה: ${shootEval.shootingStat} | מרחק: ${distFormatted} משבצות"
-                val probLayout = textMeasurer.measure(
-                    probCardText,
-                    TextStyle(color = Color.White, fontSize = (cellWidth * 0.16f).toSp(), fontWeight = FontWeight.Bold)
-                )
-                val pw = probLayout.size.width + 14f
-                val ph = probLayout.size.height + 6f
-                drawRoundRect(
-                    color = Color(0xFF0F172A).copy(alpha = 0.94f),
-                    topLeft = Offset(midX - pw / 2f, midY - ph / 2f),
-                    size = Size(pw, ph),
-                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f)
-                )
-                drawRoundRect(
-                    color = shootColor,
-                    topLeft = Offset(midX - pw / 2f, midY - ph / 2f),
-                    size = Size(pw, ph),
-                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(5f, 5f),
-                    style = Stroke(width = 1.5f)
-                )
-                drawText(
-                    textLayoutResult = probLayout,
-                    topLeft = Offset(midX - pw / 2f + 7f, midY - ph / 2f + 3f)
-                )
             }
         }
 
         // 4. Draw Living 3D Upright Player Figurines with Individual Dynamics & Lifelike Animations
         val currentBallScreenX = animatedBallX * cellWidth + cellWidth / 2
         val currentBallScreenY = animatedBallY * cellHeight + cellHeight / 2
-        val animTime = animClockMs.toLong()
 
         // Sort players by Y coordinate to maintain natural 3D depth sorting (foreground figures overlap background)
         val sortedAnimatedPlayers = animatedPlayers.sortedBy { it.animY * 100f + it.animX }
@@ -1668,7 +2025,9 @@ fun PitchCanvas(
                 pulseAlpha = pulseAlpha,
                 isActedThisTurn = isActedThisTurn,
                 textMeasurer = textMeasurer,
-                isThreatened = isThreatened
+                isThreatened = isThreatened,
+                is3D = is3D,
+                stance = animData.stance
             )
         }
 
@@ -1795,10 +2154,24 @@ fun PitchCanvas(
                 )
             }
 
-            // 5.1 Glowing Trajectory Streak Trail behind the flying ball
-            val trailSteps = 16
-            val trailStartT = (t - 0.32f).coerceAtLeast(0f)
-            if (t > 0.03f) {
+            // 5.05 Kick Impact Ground Shockwave
+            if (t < 0.28f) {
+                val kickProgress = (t / 0.28f).coerceIn(0f, 1f)
+                val shockwaveRadius = cellWidth * (0.25f + kickProgress * 1.0f)
+                val shockwaveAlpha = (1f - kickProgress) * 0.75f
+                drawCircle(
+                    color = Color.White.copy(alpha = shockwaveAlpha),
+                    radius = shockwaveRadius,
+                    center = Offset(traj.startX * cellWidth + cellWidth / 2f, traj.startY * cellHeight + cellHeight / 2f),
+                    style = Stroke(width = 2.8f * (1f - kickProgress * 0.5f))
+                )
+            }
+
+            // 5.1 Dynamic Power Shot Energy Trail & Fire Sparks behind flying ball
+            val isPowerShot = traj.isShot && (traj.probability >= 50 || traj.isGoal)
+            val trailSteps = if (isPowerShot) 22 else 16
+            val trailStartT = (t - (if (isPowerShot) 0.42f else 0.32f)).coerceAtLeast(0f)
+            if (t > 0.02f) {
                 val trailPath = Path()
                 var firstPoint = true
                 for (s in 0..trailSteps) {
@@ -1820,18 +2193,50 @@ fun PitchCanvas(
                     }
                 }
 
-                // Outer aura glow
-                drawPath(
-                    path = trailPath,
-                    color = trajColor.copy(alpha = 0.45f),
-                    style = Stroke(width = bRadius * 1.8f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                )
-                // Crisp core beam
-                drawPath(
-                    path = trailPath,
-                    color = Color.White.copy(alpha = 0.90f),
-                    style = Stroke(width = bRadius * 0.7f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                )
+                if (isPowerShot) {
+                    // Flaming outer power corona
+                    drawPath(
+                        path = trailPath,
+                        brush = Brush.linearGradient(
+                            colors = listOf(Color(0xFFFF3D00).copy(alpha = 0.65f), Color(0xFFFF9100).copy(alpha = 0.40f), Color.Transparent),
+                            start = Offset(aerialBallX, aerialBallY),
+                            end = Offset(groundBallX, groundBallY)
+                        ),
+                        style = Stroke(width = bRadius * 2.6f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    )
+                    // Electric Cyan/Gold core laser
+                    drawPath(
+                        path = trailPath,
+                        brush = Brush.linearGradient(
+                            colors = listOf(Color(0xFFFFEA00), Color(0xFF00E5FF), Color.White),
+                            start = Offset(aerialBallX, aerialBallY),
+                            end = Offset(groundBallX, groundBallY)
+                        ),
+                        style = Stroke(width = bRadius * 1.1f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    )
+                    // High-speed trailing ember spark particles
+                    for (sp in 0..10) {
+                        val sparkT = trailStartT + (t - trailStartT) * ((sp * 31 % 100) / 100f)
+                        val sparkX = (traj.startX + sparkT * deltaX) * cellWidth + cellWidth / 2f + ((animTime / 15 + sp * 17) % 14 - 7f)
+                        val sparkAlt = kotlin.math.sin(sparkT * kotlin.math.PI.toFloat()) * traj.arcHeight
+                        val sparkY = (traj.startY + sparkT * deltaY) * cellHeight + cellHeight / 2f - sparkAlt * cellHeight * 1.35f + ((animTime / 15 + sp * 23) % 12 - 6f)
+                        val sparkColor = if (sp % 2 == 0) Color(0xFFFFD700) else Color(0xFFFF5722)
+                        drawCircle(sparkColor.copy(alpha = (1f - (t - sparkT).coerceIn(0f, 1f))), radius = 2.5f, center = Offset(sparkX, sparkY))
+                    }
+                } else {
+                    // Outer aura glow
+                    drawPath(
+                        path = trailPath,
+                        color = trajColor.copy(alpha = 0.45f),
+                        style = Stroke(width = bRadius * 1.8f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    )
+                    // Crisp core beam
+                    drawPath(
+                        path = trailPath,
+                        color = Color.White.copy(alpha = 0.90f),
+                        style = Stroke(width = bRadius * 0.7f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    )
+                }
             }
 
             // 5.2 Dynamic Ground Shadow (diffuses and grows as altitude increases)
@@ -1858,60 +2263,10 @@ fun PitchCanvas(
                 center = Offset(aerialBallX, aerialBallY)
             )
 
-            // 5.3 3D Vector Soccer Ball with Physics Spin
+            // 5.3 Unity Stylized 3D Telstar Soccer Ball with Physics Spin
             val ballRadiusPx = (bRadius * 1.05f).coerceAtLeast(8f)
             val spinAngle = t * (if (traj.isShot) 1440f else 960f) * (if (traj.curveOffset >= 0) 1f else -1f)
-
-            // Ball base
-            drawCircle(
-                color = Color.White,
-                radius = ballRadiusPx,
-                center = Offset(aerialBallX, aerialBallY)
-            )
-
-            // Rotating pentagon
-            val pentagonPath = Path().apply {
-                val pRadius = ballRadiusPx * 0.40f
-                for (i in 0 until 5) {
-                    val angle = (i * 72f - 90f + spinAngle) * (kotlin.math.PI / 180f).toFloat()
-                    val px = aerialBallX + pRadius * kotlin.math.cos(angle)
-                    val py = aerialBallY + pRadius * kotlin.math.sin(angle)
-                    if (i == 0) moveTo(px, py) else lineTo(px, py)
-                }
-                close()
-            }
-            drawPath(path = pentagonPath, color = Color(0xFF1E293B))
-
-            // Seam lines with spin
-            val seamColor = Color(0xFF64748B)
-            for (i in 0 until 5) {
-                val angle = (i * 72f - 90f + spinAngle) * (kotlin.math.PI / 180f).toFloat()
-                val innerX = aerialBallX + ballRadiusPx * 0.40f * kotlin.math.cos(angle)
-                val innerY = aerialBallY + ballRadiusPx * 0.40f * kotlin.math.sin(angle)
-                val outerX = aerialBallX + ballRadiusPx * 0.95f * kotlin.math.cos(angle)
-                val outerY = aerialBallY + ballRadiusPx * 0.95f * kotlin.math.sin(angle)
-                drawLine(
-                    color = seamColor,
-                    start = Offset(innerX, innerY),
-                    end = Offset(outerX, outerY),
-                    strokeWidth = 1.2f
-                )
-            }
-
-            // Crisp outer rim
-            drawCircle(
-                color = Color(0xFF0F172A).copy(alpha = 0.6f),
-                radius = ballRadiusPx,
-                center = Offset(aerialBallX, aerialBallY),
-                style = Stroke(width = 1.2f)
-            )
-
-            // Specular gloss reflection highlight
-            drawCircle(
-                color = Color.White.copy(alpha = 0.75f),
-                radius = ballRadiusPx * 0.22f,
-                center = Offset(aerialBallX - ballRadiusPx * 0.35f, aerialBallY - ballRadiusPx * 0.35f)
-            )
+            drawUnity3DSoccerBall(aerialBallX, aerialBallY, ballRadiusPx, spinAngle)
 
             // Goal Net Impact & Ripple Effect
             if (traj.isGoal && t > 0.82f) {
@@ -1959,59 +2314,10 @@ fun PitchCanvas(
                 size = Size(bRadius * 2.2f * shadowSpread, bRadius * 0.9f * shadowSpread)
             )
 
-            // 5.2 Pure Vector Soccer Ball (Clean, sharp, no black rectangular JPEG artifacts)
+            // 5.2 Unity Stylized 3D Telstar Soccer Ball on Pitch
             val ballRadiusPx = (bRadius * 1.05f).coerceAtLeast(8f)
-
-            // Ball base (White leather sphere)
-            drawCircle(
-                color = Color.White,
-                radius = ballRadiusPx,
-                center = Offset(aerialBallX, aerialBallY)
-            )
-
-            // Center classic pentagon
-            val pentagonPath = Path().apply {
-                val pRadius = ballRadiusPx * 0.40f
-                for (i in 0 until 5) {
-                    val angle = (i * 72f - 90f) * (kotlin.math.PI / 180f).toFloat()
-                    val px = aerialBallX + pRadius * kotlin.math.cos(angle)
-                    val py = aerialBallY + pRadius * kotlin.math.sin(angle)
-                    if (i == 0) moveTo(px, py) else lineTo(px, py)
-                }
-                close()
-            }
-            drawPath(path = pentagonPath, color = Color(0xFF1E293B))
-
-            // Seam lines connecting center pentagon outward
-            val seamColor = Color(0xFF64748B)
-            for (i in 0 until 5) {
-                val angle = (i * 72f - 90f) * (kotlin.math.PI / 180f).toFloat()
-                val innerX = aerialBallX + ballRadiusPx * 0.40f * kotlin.math.cos(angle)
-                val innerY = aerialBallY + ballRadiusPx * 0.40f * kotlin.math.sin(angle)
-                val outerX = aerialBallX + ballRadiusPx * 0.95f * kotlin.math.cos(angle)
-                val outerY = aerialBallY + ballRadiusPx * 0.95f * kotlin.math.sin(angle)
-                drawLine(
-                    color = seamColor,
-                    start = Offset(innerX, innerY),
-                    end = Offset(outerX, outerY),
-                    strokeWidth = 1.2f
-                )
-            }
-
-            // Crisp outer rim
-            drawCircle(
-                color = Color(0xFF0F172A).copy(alpha = 0.6f),
-                radius = ballRadiusPx,
-                center = Offset(aerialBallX, aerialBallY),
-                style = Stroke(width = 1.2f)
-            )
-
-            // Specular gloss reflection highlight (top-left glint)
-            drawCircle(
-                color = Color.White.copy(alpha = 0.7f),
-                radius = ballRadiusPx * 0.22f,
-                center = Offset(aerialBallX - ballRadiusPx * 0.35f, aerialBallY - ballRadiusPx * 0.35f)
-            )
+            val idleSpin = (animTime * 0.02f)
+            drawUnity3DSoccerBall(aerialBallX, aerialBallY, ballRadiusPx, idleSpin)
         }
 
         // 6. Draw Goalkeeper Save & Dive Animation Effect
@@ -2121,6 +2427,33 @@ fun PitchCanvas(
                     radius = 8f,
                     center = Offset(boxCenterX, boxCenterY)
                 )
+            }
+        }
+
+        // 8. Celebratory Stadium Confetti Flutter on Goal
+        if (isGoalMoment) {
+            for (i in 0..44) {
+                val seed = i * 4919
+                val cX = ((seed % 1000) / 1000f) * size.width
+                val fallSpeed = 0.22f + ((seed % 400) / 1000f)
+                val cY = ((animTime * fallSpeed + seed) % (size.height + 40f)) - 20f
+                val cRot = (animTime * 0.25f + seed) % 360f
+                val cColor = when (i % 4) {
+                    0 -> Color(0xFFFFD700) // Gold
+                    1 -> Color(0xFFFFFFFF) // White
+                    2 -> Color(0xFF38BDF8) // Azure Blue
+                    else -> Color(0xFFF59E0B) // Golden Amber
+                }
+                val cW = 8f + (seed % 6)
+                val cH = 5f + (seed % 4)
+                rotate(degrees = cRot, pivot = Offset(cX, cY)) {
+                    drawRoundRect(
+                        color = cColor.copy(alpha = 0.88f),
+                        topLeft = Offset(cX - cW / 2f, cY - cH / 2f),
+                        size = Size(cW, cH),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(1.5f, 1.5f)
+                    )
+                }
             }
         }
     }
@@ -2621,45 +2954,46 @@ fun TacticalDuelOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.72f))
+            .padding(top = 8.dp, start = 12.dp, end = 12.dp)
             .clickable { onDismiss() },
-        contentAlignment = Alignment.Center
+        contentAlignment = Alignment.TopCenter
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth(0.92f)
+                .fillMaxWidth()
+                .widthIn(max = 500.dp)
                 .clickable(enabled = false) {},
-            shape = RoundedCornerShape(24.dp),
-            color = Color(0xFF0F172A),
-            border = BorderStroke(2.5.dp, Brush.horizontalGradient(
+            shape = RoundedCornerShape(16.dp),
+            color = Color(0xFF0F172A).copy(alpha = 0.96f),
+            border = BorderStroke(2.dp, Brush.horizontalGradient(
                 listOf(
                     if (duel.isAttackerWin) Color(0xFF22C55E) else Color(0xFFEF4444),
                     Color(0xFF38BDF8),
                     if (duel.isAttackerWin) Color(0xFFEF4444) else Color(0xFF22C55E)
                 )
             )),
-            shadowElevation = 24.dp
+            shadowElevation = 18.dp
         ) {
             Column(
-                modifier = Modifier.padding(20.dp),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Header badge
                 Surface(
                     color = (if (duel.isAttackerWin) Color(0xFF22C55E) else Color(0xFFEF4444)).copy(alpha = 0.2f),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(10.dp),
                     border = BorderStroke(1.dp, if (duel.isAttackerWin) Color(0xFF22C55E) else Color(0xFFEF4444))
                 ) {
                     Text(
                         text = duel.title,
                         color = Color.White,
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = 17.sp,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                        fontSize = 15.sp,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // Clash Cards: Attacker vs Defender
                 Row(
@@ -2713,7 +3047,7 @@ fun TacticalDuelOverlay(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // Power comparison bar
                 val totalAttackerPower = duel.attackerStatVal + duel.attackerRoll
@@ -3352,4 +3686,93 @@ fun PregameScreen(
             }
         }
     }
+}
+
+/**
+ * Draws an authentic Unity 3D stylized Telstar soccer ball with spherical shading,
+ * rotating geometric panels, leather seams, and specular floodlight gloss.
+ */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawUnity3DSoccerBall(
+    cx: Float,
+    cy: Float,
+    radius: Float,
+    spinAngle: Float = 0f
+) {
+    val r = radius.coerceAtLeast(8f)
+
+    // 1. Spherical 3D Shading (Top-left key light to bottom-right ambient shadow)
+    drawCircle(
+        brush = Brush.radialGradient(
+            colors = listOf(Color(0xFFFFFFFF), Color(0xFFF1F5F9), Color(0xFFE2E8F0), Color(0xFF94A3B8)),
+            center = Offset(cx - r * 0.35f, cy - r * 0.35f),
+            radius = r * 1.35f
+        ),
+        radius = r,
+        center = Offset(cx, cy)
+    )
+
+    // 2. Central Telstar 3D Pentagon with Spin
+    val pRadius = r * 0.38f
+    val pentagonPath = Path().apply {
+        for (i in 0 until 5) {
+            val angle = (i * 72f - 90f + spinAngle) * (kotlin.math.PI / 180f).toFloat()
+            val px = cx + pRadius * kotlin.math.cos(angle)
+            val py = cy + pRadius * kotlin.math.sin(angle)
+            if (i == 0) moveTo(px, py) else lineTo(px, py)
+        }
+        close()
+    }
+    drawPath(
+        path = pentagonPath,
+        brush = Brush.radialGradient(
+            colors = listOf(Color(0xFF334155), Color(0xFF0F172A)),
+            center = Offset(cx - pRadius * 0.2f, cy - pRadius * 0.2f),
+            radius = pRadius * 1.2f
+        )
+    )
+
+    // 3. Seam lines and Outer Satellite Pentagon Patches
+    val seamColor = Color(0xFF475569)
+    for (i in 0 until 5) {
+        val angle = (i * 72f - 90f + spinAngle) * (kotlin.math.PI / 180f).toFloat()
+        val innerX = cx + pRadius * kotlin.math.cos(angle)
+        val innerY = cy + pRadius * kotlin.math.sin(angle)
+        val outerX = cx + r * 0.96f * kotlin.math.cos(angle)
+        val outerY = cy + r * 0.96f * kotlin.math.sin(angle)
+        drawLine(
+            color = seamColor,
+            start = Offset(innerX, innerY),
+            end = Offset(outerX, outerY),
+            strokeWidth = 1.3f
+        )
+        // Outer small black satellite corner patch along sphere rim
+        val satAngle = (i * 72f - 54f + spinAngle) * (kotlin.math.PI / 180f).toFloat()
+        val satX = cx + r * 0.88f * kotlin.math.cos(satAngle)
+        val satY = cy + r * 0.88f * kotlin.math.sin(satAngle)
+        drawCircle(
+            color = Color(0xFF1E293B).copy(alpha = 0.85f),
+            radius = r * 0.16f,
+            center = Offset(satX, satY)
+        )
+    }
+
+    // 4. Specular PBR Glint (Bright glossy floodlight reflection)
+    drawCircle(
+        color = Color.White.copy(alpha = 0.88f),
+        radius = r * 0.22f,
+        center = Offset(cx - r * 0.35f, cy - r * 0.35f)
+    )
+    drawCircle(
+        color = Color(0xFF67E8F9).copy(alpha = 0.35f),
+        radius = r * 0.40f,
+        center = Offset(cx - r * 0.35f, cy - r * 0.35f)
+    )
+
+    // 5. Outer Ambient Occlusion Rim
+    drawCircle(
+        color = Color(0xFF0F172A).copy(alpha = 0.55f),
+        radius = r,
+        center = Offset(cx, cy),
+        style = Stroke(width = 1.2f)
+    )
 }
